@@ -63,71 +63,97 @@
 - (void) error:(NSString*)message { [self log:VERBOSITY_ERROR message:message]; }
 
 - (void) setup {
+    NSLog(@"ShareViewController - setup: Group identifier = %@", SHAREEXT_GROUP_IDENTIFIER);
+    NSLog(@"ShareViewController - setup: URL scheme = %@", SHAREEXT_URL_SCHEME);
     self.userDefaults = [[NSUserDefaults alloc] initWithSuiteName:SHAREEXT_GROUP_IDENTIFIER];
+    if (!self.userDefaults) {
+        NSLog(@"ShareViewController - ERROR: Failed to initialize userDefaults with suite name");
+    } else {
+        NSLog(@"ShareViewController - userDefaults initialized successfully");
+    }
     self.verbosityLevel = [self.userDefaults integerForKey:@"verbosityLevel"];
+    NSLog(@"ShareViewController - Verbosity level: %d", self.verbosityLevel);
     [self debug:@"[setup]"];
 }
 
 - (void) viewDidLoad {
     [super viewDidLoad];
+    NSLog(@"ShareViewController - viewDidLoad started");
     [self setup];
     [self debug:@"[viewDidLoad]"];
 
     // Immediately process the shared content
     [self handleSharedContent];
+    NSLog(@"ShareViewController - viewDidLoad completed");
 }
 
 - (void) openURL:(nonnull NSURL *)url {
+    NSLog(@"ShareViewController - openURL called with: %@", url);
     [self debug:[NSString stringWithFormat:@"[openURL] %@", url]];
 
     // App Extensions cannot directly open URLs using UIApplication
     // Instead, use the extension context's openURL method (iOS 10+)
     if (@available(iOS 10.0, *)) {
+        NSLog(@"ShareViewController - Attempting to open URL via extensionContext");
         [self.extensionContext openURL:url completionHandler:^(BOOL success) {
+            NSLog(@"ShareViewController - openURL completion: success=%d", success);
             if (success) {
                 [self debug:@"[openURL] Successfully opened URL"];
             } else {
-                [self error:@"[openURL] Failed to open URL"];
+                [self error:@"[openURL] Failed to open URL - the URL may not be registered or the app may not be installed"];
             }
         }];
     } else {
+        NSLog(@"ShareViewController - ERROR: iOS 10+ required");
         [self error:@"[openURL] openURL requires iOS 10 or later"];
     }
 }
 
 - (void) handleSharedContent {
+    NSLog(@"ShareViewController - handleSharedContent started");
     [self debug:@"[handleSharedContent]"];
 
     if (!self.extensionContext) {
+        NSLog(@"ShareViewController - ERROR: No extension context");
         [self error:@"[handleSharedContent] No extension context"];
         return;
     }
 
     NSExtensionItem *inputItem = self.extensionContext.inputItems.firstObject;
     if (!inputItem) {
+        NSLog(@"ShareViewController - ERROR: No input items");
         [self error:@"[handleSharedContent] No input items"];
         [self.extensionContext completeRequestReturningItems:@[] completionHandler:nil];
         return;
     }
+    NSLog(@"ShareViewController - Found input item with %lu attachments", (unsigned long)inputItem.attachments.count);
 
     // Get content text if available
     NSString *contentText = inputItem.attributedContentText.string ?: @"";
+    NSLog(@"ShareViewController - Content text: %@", contentText);
+    NSLog(@"ShareViewController - Looking for type identifier: %@", SHAREEXT_UNIFORM_TYPE_IDENTIFIER);
 
     // Process attachments
     for (NSItemProvider* itemProvider in inputItem.attachments) {
+        NSLog(@"ShareViewController - Processing attachment: %@", itemProvider.registeredTypeIdentifiers);
 
         if ([itemProvider hasItemConformingToTypeIdentifier:SHAREEXT_UNIFORM_TYPE_IDENTIFIER]) {
+            NSLog(@"ShareViewController - Found matching type identifier");
             [self debug:[NSString stringWithFormat:@"item provider = %@", itemProvider]];
 
             [itemProvider loadItemForTypeIdentifier:SHAREEXT_UNIFORM_TYPE_IDENTIFIER options:nil completionHandler: ^(id<NSSecureCoding> item, NSError *error) {
+                NSLog(@"ShareViewController - loadItemForTypeIdentifier completed");
 
                 if (error) {
+                    NSLog(@"ShareViewController - ERROR loading item: %@", error.localizedDescription);
                     [self error:[NSString stringWithFormat:@"[handleSharedContent] Error loading item: %@", error.localizedDescription]];
                     dispatch_async(dispatch_get_main_queue(), ^{
                         [self.extensionContext completeRequestReturningItems:@[] completionHandler:nil];
                     });
                     return;
                 }
+
+                NSLog(@"ShareViewController - Item loaded successfully, type: %@", NSStringFromClass([item class]));
 
                 NSData *data = [[NSData alloc] init];
                 if([(NSObject*)item isKindOfClass:[NSURL class]]) {
@@ -159,11 +185,14 @@
                     @"utis": utis,
                     @"name": suggestedName
                 };
+                NSLog(@"ShareViewController - Saving data to userDefaults with key 'image'");
+                NSLog(@"ShareViewController - Data size: %lu bytes, text: %@", (unsigned long)data.length, contentText);
                 [self.userDefaults setObject:dict forKey:@"image"];
                 // Note: synchronize is deprecated but happens automatically
 
                 // Emit a URL that opens the cordova app
                 NSString *urlString = [NSString stringWithFormat:@"%@://image", SHAREEXT_URL_SCHEME];
+                NSLog(@"ShareViewController - Constructed URL: %@", urlString);
                 [self debug:[NSString stringWithFormat:@"[handleSharedContent] Opening URL: %@", urlString]];
 
                 dispatch_async(dispatch_get_main_queue(), ^{
@@ -172,7 +201,10 @@
                     // Inform the host that we're done, so it un-blocks its UI.
                     // Delay slightly to ensure the URL is opened first
                     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                        [self.extensionContext completeRequestReturningItems:@[] completionHandler:nil];
+                        NSLog(@"ShareViewController - Completing extension request");
+                        [self.extensionContext completeRequestReturningItems:@[] completionHandler:^(BOOL expired) {
+                            NSLog(@"ShareViewController - Extension request completed, expired=%d", expired);
+                        }];
                     });
                 });
             }];
@@ -182,6 +214,7 @@
     }
 
     // No matching items found
+    NSLog(@"ShareViewController - ERROR: No matching items found for type identifier: %@", SHAREEXT_UNIFORM_TYPE_IDENTIFIER);
     [self error:@"[handleSharedContent] No matching items found"];
     [self.extensionContext completeRequestReturningItems:@[] completionHandler:nil];
 }
