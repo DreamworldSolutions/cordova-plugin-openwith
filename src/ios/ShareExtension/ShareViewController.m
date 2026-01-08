@@ -30,14 +30,11 @@
 #import <UIKit/UIKit.h>
 #import "ShareViewController.h"
 
-@interface ShareViewController : UIViewController {
+@interface ShareViewController () {
     int _verbosityLevel;
     NSUserDefaults *_userDefaults;
     NSString *_backURL;
 }
-@property (nonatomic) int verbosityLevel;
-@property (nonatomic,retain) NSUserDefaults *userDefaults;
-@property (nonatomic,retain) NSString *backURL;
 @end
 
 /*
@@ -83,40 +80,19 @@
 - (void) openURL:(nonnull NSURL *)url {
     [self debug:[NSString stringWithFormat:@"[openURL] %@", url]];
 
-    // Modern approach for iOS 13+
-    if (@available(iOS 13.0, *)) {
-        // Get the scene from the extension context
-        UIResponder* responder = self;
-        while ((responder = [responder nextResponder]) != nil) {
-            if ([responder isKindOfClass:[UIApplication class]]) {
-                UIApplication *application = (UIApplication *)responder;
-                [application performSelector:@selector(openURL:options:completionHandler:)
-                                  withObject:url
-                                  withObject:@{@"universalLinksOnly": @NO}
-                                  withObject:^(BOOL success) {
-                    NSLog(@"[openURL] completion: %i", success);
-                }];
-                return;
+    // App Extensions cannot directly open URLs using UIApplication
+    // Instead, use the extension context's openURL method (iOS 10+)
+    if (@available(iOS 10.0, *)) {
+        [self.extensionContext openURL:url completionHandler:^(BOOL success) {
+            if (success) {
+                [self debug:@"[openURL] Successfully opened URL"];
+            } else {
+                [self error:@"[openURL] Failed to open URL"];
             }
-        }
-
-        // Fallback: Try to get the application through the scene
-        NSSet<UIScene *> *connectedScenes = [UIApplication sharedApplication].connectedScenes;
-        for (UIScene *scene in connectedScenes) {
-            if ([scene isKindOfClass:[UIWindowScene class]]) {
-                UIWindowScene *windowScene = (UIWindowScene *)scene;
-                [[UIApplication sharedApplication] openURL:url options:@{} completionHandler:^(BOOL success) {
-                    NSLog(@"[openURL] scene completion: %i", success);
-                }];
-                return;
-            }
-        }
+        }];
+    } else {
+        [self error:@"[openURL] openURL requires iOS 10 or later"];
     }
-
-    // Fallback for older iOS versions (though we require iOS 13+)
-    [[UIApplication sharedApplication] openURL:url options:@{} completionHandler:^(BOOL success) {
-        NSLog(@"[openURL] fallback completion: %i", success);
-    }];
 }
 
 - (void) handleSharedContent {

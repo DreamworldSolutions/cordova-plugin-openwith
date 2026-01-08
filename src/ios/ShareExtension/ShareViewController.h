@@ -33,4 +33,9 @@
 #define SHAREEXT_UNIFORM_TYPE_IDENTIFIER @"__UNIFORM_TYPE_IDENTIFIER__"
 
 @interface ShareViewController : UIViewController
+
+@property (nonatomic) int verbosityLevel;
+@property (nonatomic,retain) NSUserDefaults *userDefaults;
+@property (nonatomic,retain) NSString *backURL;
+
 @end
