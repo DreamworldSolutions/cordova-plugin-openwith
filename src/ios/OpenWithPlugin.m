@@ -173,7 +173,7 @@ static NSDictionary* launchOptions = nil;
                                       andClass:[NSNumber class]];
     self.verbosityLevel = value.integerValue;
     [self.userDefaults setInteger:self.verbosityLevel forKey:@"verbosityLevel"];
-    [self.userDefaults synchronize];
+    // Note: synchronize is deprecated, happens automatically
     [self debug:[NSString stringWithFormat:@"[setVerbosity] %d", self.verbosityLevel]];
     CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
     [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
@@ -211,7 +211,7 @@ static NSDictionary* launchOptions = nil;
         return;
     }
 
-    [self.userDefaults synchronize];
+    // Note: synchronize is deprecated, happens automatically
     NSObject *object = [self.userDefaults objectForKey:@"image"];
     if (object == nil) {
         [self debug:@"[checkForFileToShare] Nothing to share"];

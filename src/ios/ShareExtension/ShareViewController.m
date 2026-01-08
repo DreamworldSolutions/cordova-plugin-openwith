@@ -28,10 +28,9 @@
 //
 
 #import <UIKit/UIKit.h>
-#import <Social/Social.h>
 #import "ShareViewController.h"
 
-@interface ShareViewController : SLComposeServiceViewController {
+@interface ShareViewController : UIViewController {
     int _verbosityLevel;
     NSUserDefaults *_userDefaults;
     NSString *_backURL;
@@ -72,64 +71,88 @@
     [self debug:@"[setup]"];
 }
 
-- (BOOL) isContentValid {
-    return YES;
+- (void) viewDidLoad {
+    [super viewDidLoad];
+    [self setup];
+    [self debug:@"[viewDidLoad]"];
+
+    // Immediately process the shared content
+    [self handleSharedContent];
 }
 
 - (void) openURL:(nonnull NSURL *)url {
+    [self debug:[NSString stringWithFormat:@"[openURL] %@", url]];
 
-    SEL selector = NSSelectorFromString(@"openURL:options:completionHandler:");
+    // Modern approach for iOS 13+
+    if (@available(iOS 13.0, *)) {
+        // Get the scene from the extension context
+        UIResponder* responder = self;
+        while ((responder = [responder nextResponder]) != nil) {
+            if ([responder isKindOfClass:[UIApplication class]]) {
+                UIApplication *application = (UIApplication *)responder;
+                [application performSelector:@selector(openURL:options:completionHandler:)
+                                  withObject:url
+                                  withObject:@{@"universalLinksOnly": @NO}
+                                  withObject:^(BOOL success) {
+                    NSLog(@"[openURL] completion: %i", success);
+                }];
+                return;
+            }
+        }
 
-    UIResponder* responder = self;
-    while ((responder = [responder nextResponder]) != nil) {
-        NSLog(@"responder = %@", responder);
-        if([responder respondsToSelector:selector] == true) {
-            NSMethodSignature *methodSignature = [responder methodSignatureForSelector:selector];
-            NSInvocation *invocation = [NSInvocation invocationWithMethodSignature:methodSignature];
-
-            // Arguments
-            void (^completion)(BOOL success) = ^void(BOOL success) {
-                NSLog(@"Completions block: %i", success);
-            };
-            if (@available(iOS 13.0, *)) {
-                UISceneOpenExternalURLOptions * options = [[UISceneOpenExternalURLOptions alloc] init];
-                options.universalLinksOnly = false;
-                
-                [invocation setTarget: responder];
-                [invocation setSelector: selector];
-                [invocation setArgument: &url atIndex: 2];
-                [invocation setArgument: &options atIndex:3];
-                [invocation setArgument: &completion atIndex: 4];
-                [invocation invoke];
-                break;
-            } else {
-                NSDictionary<NSString *, id> *options = [NSDictionary dictionary];
-                
-                [invocation setTarget: responder];
-                [invocation setSelector: selector];
-                [invocation setArgument: &url atIndex: 2];
-                [invocation setArgument: &options atIndex:3];
-                [invocation setArgument: &completion atIndex: 4];
-                [invocation invoke];
-                break;
+        // Fallback: Try to get the application through the scene
+        NSSet<UIScene *> *connectedScenes = [UIApplication sharedApplication].connectedScenes;
+        for (UIScene *scene in connectedScenes) {
+            if ([scene isKindOfClass:[UIWindowScene class]]) {
+                UIWindowScene *windowScene = (UIWindowScene *)scene;
+                [[UIApplication sharedApplication] openURL:url options:@{} completionHandler:^(BOOL success) {
+                    NSLog(@"[openURL] scene completion: %i", success);
+                }];
+                return;
             }
         }
     }
+
+    // Fallback for older iOS versions (though we require iOS 13+)
+    [[UIApplication sharedApplication] openURL:url options:@{} completionHandler:^(BOOL success) {
+        NSLog(@"[openURL] fallback completion: %i", success);
+    }];
 }
 
-- (void) didSelectPost {
+- (void) handleSharedContent {
+    [self debug:@"[handleSharedContent]"];
 
-    [self setup];
-    [self debug:@"[didSelectPost]"];
+    if (!self.extensionContext) {
+        [self error:@"[handleSharedContent] No extension context"];
+        return;
+    }
 
-    // This is called after the user selects Post. Do the upload of contentText and/or NSExtensionContext attachments.
-    for (NSItemProvider* itemProvider in ((NSExtensionItem*)self.extensionContext.inputItems[0]).attachments) {
-        
+    NSExtensionItem *inputItem = self.extensionContext.inputItems.firstObject;
+    if (!inputItem) {
+        [self error:@"[handleSharedContent] No input items"];
+        [self.extensionContext completeRequestReturningItems:@[] completionHandler:nil];
+        return;
+    }
+
+    // Get content text if available
+    NSString *contentText = inputItem.attributedContentText.string ?: @"";
+
+    // Process attachments
+    for (NSItemProvider* itemProvider in inputItem.attachments) {
+
         if ([itemProvider hasItemConformingToTypeIdentifier:SHAREEXT_UNIFORM_TYPE_IDENTIFIER]) {
             [self debug:[NSString stringWithFormat:@"item provider = %@", itemProvider]];
-            
+
             [itemProvider loadItemForTypeIdentifier:SHAREEXT_UNIFORM_TYPE_IDENTIFIER options:nil completionHandler: ^(id<NSSecureCoding> item, NSError *error) {
-                
+
+                if (error) {
+                    [self error:[NSString stringWithFormat:@"[handleSharedContent] Error loading item: %@", error.localizedDescription]];
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        [self.extensionContext completeRequestReturningItems:@[] completionHandler:nil];
+                    });
+                    return;
+                }
+
                 NSData *data = [[NSData alloc] init];
                 if([(NSObject*)item isKindOfClass:[NSURL class]]) {
                     data = [NSData dataWithContentsOfURL:(NSURL*)item];
@@ -153,47 +176,38 @@
                     uti = SHAREEXT_UNIFORM_TYPE_IDENTIFIER;
                 }
                 NSDictionary *dict = @{
-                    @"text": self.contentText,
-                    @"backURL": self.backURL,
+                    @"text": contentText,
+                    @"backURL": self.backURL ?: @"",
                     @"data" : data,
                     @"uti": uti,
                     @"utis": utis,
                     @"name": suggestedName
                 };
                 [self.userDefaults setObject:dict forKey:@"image"];
-                [self.userDefaults synchronize];
+                // Note: synchronize is deprecated but happens automatically
 
                 // Emit a URL that opens the cordova app
-                NSString *url = [NSString stringWithFormat:@"%@://image", SHAREEXT_URL_SCHEME];
+                NSString *urlString = [NSString stringWithFormat:@"%@://image", SHAREEXT_URL_SCHEME];
+                [self debug:[NSString stringWithFormat:@"[handleSharedContent] Opening URL: %@", urlString]];
 
-                // Not allowed:
-                // [[UIApplication sharedApplication] openURL:[NSURL URLWithString:url]];
-                
-                // Crashes:
-                // [self.extensionContext openURL:[NSURL URLWithString:url] completionHandler:nil];
-                
-                // From https://stackoverflow.com/a/25750229/2343390
-                // Reported not to work since iOS 8.3
-                // NSURLRequest *request = [[NSURLRequest alloc] initWithURL:[NSURL URLWithString:url]];
-                // [self.webView loadRequest:request];
-                
-                [self openURL:[NSURL URLWithString:url]];
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    [self openURL:[NSURL URLWithString:urlString]];
 
-                // Inform the host that we're done, so it un-blocks its UI.
-                [self.extensionContext completeRequestReturningItems:@[] completionHandler:nil];
+                    // Inform the host that we're done, so it un-blocks its UI.
+                    // Delay slightly to ensure the URL is opened first
+                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                        [self.extensionContext completeRequestReturningItems:@[] completionHandler:nil];
+                    });
+                });
             }];
 
             return;
         }
     }
 
-    // Inform the host that we're done, so it un-blocks its UI.
+    // No matching items found
+    [self error:@"[handleSharedContent] No matching items found"];
     [self.extensionContext completeRequestReturningItems:@[] completionHandler:nil];
-}
-
-- (NSArray*) configurationItems {
-    // To add configuration options via table cells at the bottom of the sheet, return an array of SLComposeSheetConfigurationItem here.
-    return @[];
 }
 
 - (NSString*) backURLFromBundleID: (NSString*)bundleId {

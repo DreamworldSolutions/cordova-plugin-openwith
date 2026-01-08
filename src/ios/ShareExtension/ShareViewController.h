@@ -5,6 +5,7 @@
 // The MIT License (MIT)
 //
 // Copyright (c) 2017 Jean-Christophe Hoelt
+// Updated for modern iOS (2025) - Removed deprecated SLComposeServiceViewController
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -25,6 +26,11 @@
 // THE SOFTWARE.
 //
 
+#import <UIKit/UIKit.h>
+
 #define SHAREEXT_GROUP_IDENTIFIER @"__GROUP_IDENTIFIER__"
 #define SHAREEXT_URL_SCHEME @"__URL_SCHEME__"
 #define SHAREEXT_UNIFORM_TYPE_IDENTIFIER @"__UNIFORM_TYPE_IDENTIFIER__"
+
+@interface ShareViewController : UIViewController
+@end
